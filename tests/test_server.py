@@ -74,15 +74,18 @@ class Sandbox:
         )
         self.process = subprocess.Popen([sys.executable, SERVER, self.lock, grace], env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         deadline = time.monotonic() + 20
+        last = None
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
                 raise AssertionError("server exited early: %s" % self.process.stderr.read().decode())
             try:
                 self.get("/health")
                 return
-            except (urllib.error.URLError, ConnectionError):
+            except (urllib.error.URLError, ConnectionError) as error:
+                last = error
                 time.sleep(0.05)
-        raise AssertionError("server never became healthy")
+        self.process.kill()
+        raise AssertionError("server never became healthy on port %s (%r); stderr: %s" % (self.port, last, self.process.communicate(timeout=5)[1].decode()))
 
     def stop(self):
         if self.process is not None and self.process.poll() is None:
