@@ -35,6 +35,7 @@ class Sandbox:
         self.root = tempfile.mkdtemp(prefix="jev-local-test-")
         stub = os.path.join(self.root, "stub")
         files = {
+            "sitecustomize.py": "import socket\n\nsocket.getfqdn = lambda name='': name\n",
             "mlx/__init__.py": "",
             "mlx/core.py": stubs.MLX_CORE_STUB,
             "huggingface_hub/__init__.py": stubs.HUGGINGFACE_HUB_STUB,
