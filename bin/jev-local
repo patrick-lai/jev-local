@@ -1,0 +1,41 @@
+#!/bin/sh
+set -eu
+
+here=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+share="$here/share/jev-local"
+
+usage() {
+    cat <<'USAGE'
+Usage: jev-local <command>
+
+  version [--json]  Print the runtime version, or its full description as JSON.
+  path              Print the path of the decision server (server.py).
+  serve             Run the decision server; configuration comes from DECISION_* variables.
+
+The server needs Python 3.12 with the packages listed by `version --json`.
+USAGE
+}
+
+case "${1:-}" in
+    version)
+        case "${2:-}" in
+            --json) cat "$share/runtime.json" ;;
+            '') sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$share/runtime.json" ;;
+            *) usage >&2; exit 2 ;;
+        esac
+        ;;
+    path)
+        printf '%s\n' "$share/server.py"
+        ;;
+    serve)
+        shift
+        exec "${JEV_LOCAL_PYTHON:-python3}" "$share/server.py" "$@"
+        ;;
+    -h|--help|help)
+        usage
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac

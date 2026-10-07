@@ -1,0 +1,29 @@
+{
+  "name": "@patrick-lai/jev-local",
+  "version": "0.0.0",
+  "description": "A local decision server for Intern-Decision-4B on Apple silicon, answering in the JEV request shape",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/patrick-lai/jev-local.git"
+  },
+  "homepage": "https://github.com/patrick-lai/jev-local",
+  "bin": {
+    "jev-local": "bin/jev-local"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/",
+    "share/",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,7 @@
+jev-local
+Copyright 2026 Patrick Lai
+
+This product serves the Intern-Decision-4B model (https://huggingface.co/internlm/Intern-Decision-4B),
+which is published by InternLM under the Apache License 2.0. The decision prompt, answer symbols and
+scoring in share/jev-local/server.py follow that model's published method, ported to MLX. The model
+weights are not part of this repository and are downloaded from Hugging Face on first use.

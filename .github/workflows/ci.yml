@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 -m unittest discover -s tests -v
+      - run: scripts/build-dist.sh
+      - run: scripts/pack-npm.sh
+      - name: The packaged runtime describes itself
+        run: |
+          mkdir "$RUNNER_TEMP/unpacked"
+          tar -xzf dist/jev-local-*-darwin-arm64.tar.gz -C "$RUNNER_TEMP/unpacked"
+          "$RUNNER_TEMP/unpacked/jev-local/bin/jev-local" version --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["protocol"]==1 and d["model"]; print(d["version"])'

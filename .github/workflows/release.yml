@@ -1,0 +1,148 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build, sign and package everything, but do not create the release or publish to npm
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - id: plan
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version=$(jq -r .version share/jev-local/runtime.json)
+          case "$version" in
+            ''|*[!0-9A-Za-z.+-]*) echo "::error::Could not read the version from share/jev-local/runtime.json (got '$version')."; exit 1 ;;
+          esac
+          if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $REF_NAME does not match version $version. Tag v$version instead, or bump the version."
+            exit 1
+          fi
+          dry_run=false
+          if [ "$DRY_RUN" = true ]; then dry_run=true; fi
+          if [ "$dry_run" = false ] && [ "$REF_TYPE" != tag ]; then
+            echo "::error::A real release must run from the v$version tag. Push the tag, or run with dry_run."
+            exit 1
+          fi
+          npm_tag=latest
+          prerelease=false
+          case "$version" in *-*) npm_tag=next; prerelease=true ;; esac
+          {
+            echo "version=$version"
+            echo "dry_run=$dry_run"
+            echo "npm_tag=$npm_tag"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+      - run: python3 -m unittest discover -s tests -v
+      - run: scripts/build-dist.sh
+      - name: Signed manifest
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          DRY_RUN: ${{ steps.plan.outputs.dry_run }}
+          JEV_LOCAL_RELEASE_KEY: ${{ secrets.JEV_LOCAL_RELEASE_KEY }}
+        working-directory: dist
+        run: |
+          name="jev-local-$VERSION-darwin-arm64.tar.gz"
+          sha256sum --check --strict "$name.sha256"
+          sha256sum "$name" > SHA256SUMS
+          file=$(jq -n --arg name "$name" --arg sha256 "$(sha256sum "$name" | cut -d' ' -f1)" --argjson bytes "$(stat -c %s "$name")" '{platform: "darwin-arm64", name: $name, sha256: $sha256, bytes: $bytes}')
+          jq --argjson files "[$file]" '. + {name: "jev-local", files: $files}' ../share/jev-local/runtime.json > manifest.json
+          jq -e '.version == env.VERSION and .protocol == 1' manifest.json > /dev/null
+          cat manifest.json
+          if [ -z "$JEV_LOCAL_RELEASE_KEY" ]; then
+            if [ "$DRY_RUN" = true ]; then echo "::warning::JEV_LOCAL_RELEASE_KEY is not set, so the dry-run manifest is unsigned."; exit 0; fi
+            echo "::error::JEV_LOCAL_RELEASE_KEY is required to sign the release manifest."
+            exit 1
+          fi
+          umask 077
+          key="$RUNNER_TEMP/release-key.pem"
+          printf '%s\n' "$JEV_LOCAL_RELEASE_KEY" > "$key"
+          openssl pkeyutl -sign -inkey "$key" -rawin -in manifest.json -out "$RUNNER_TEMP/manifest.sig"
+          rm -f "$key"
+          openssl pkeyutl -verify -pubin -inkey ../release-key.pub -rawin -in manifest.json -sigfile "$RUNNER_TEMP/manifest.sig"
+          base64 -w0 "$RUNNER_TEMP/manifest.sig" > manifest.json.sig
+      - run: scripts/pack-npm.sh
+      - name: Check the npm package
+        env:
+          NPM_TAG: ${{ steps.plan.outputs.npm_tag }}
+        run: for package in dist/npm/*.tgz; do npm publish "$package" --dry-run --access public --tag "$NPM_TAG"; done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ steps.plan.outputs.version }}
+          path: |
+            dist/SHA256SUMS
+            dist/manifest.json*
+            dist/npm/*.tgz
+            dist/jev-local-*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+      - name: Create GitHub release
+        if: steps.plan.outputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          PRERELEASE: ${{ steps.plan.outputs.prerelease }}
+        run: |
+          tag="v$VERSION"
+          draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null || echo missing)
+          if [ "$draft" = false ]; then
+            gh release download "$tag" --pattern SHA256SUMS --output "$RUNNER_TEMP/published-SHA256SUMS"
+            if cmp -s "$RUNNER_TEMP/published-SHA256SUMS" dist/SHA256SUMS; then
+              echo "Release $tag is already published with these files."
+              exit 0
+            fi
+            echo "::error::Release $tag is already published with different files. Release a new version instead."
+            exit 1
+          fi
+          if [ "$draft" = missing ]; then
+            set -- --draft --verify-tag --title "jev-local $VERSION" --generate-notes
+            if [ "$PRERELEASE" = true ]; then set -- "$@" --prerelease; fi
+            gh release create "$tag" "$@"
+          fi
+          gh release upload "$tag" dist/jev-local-"$VERSION"-darwin-arm64.tar.gz dist/SHA256SUMS dist/manifest.json dist/manifest.json.sig --clobber
+          gh release edit "$tag" --draft=false
+      - name: Publish to npm
+        if: steps.plan.outputs.dry_run != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          NPM_TAG: ${{ steps.plan.outputs.npm_tag }}
+        run: |
+          published=$(npm view "@patrick-lai/jev-local@$VERSION" version 2>/dev/null || true)
+          if [ "$published" = "$VERSION" ]; then
+            echo "@patrick-lai/jev-local@$VERSION is already on npm."
+            exit 0
+          fi
+          npm publish "dist/npm/patrick-lai-jev-local-$VERSION.tgz" --provenance --access public --tag "$NPM_TAG"
