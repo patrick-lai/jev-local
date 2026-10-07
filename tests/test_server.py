@@ -21,6 +21,9 @@ CACHE_MB = 256
 REVISION = "0e5e6aa7d6d750e2b1504ba11a8136cb58aeb3cd"
 
 
+OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def free_port():
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
@@ -93,13 +96,13 @@ class Sandbox:
         shutil.rmtree(self.root, ignore_errors=True)
 
     def get(self, path):
-        with urllib.request.urlopen("http://127.0.0.1:%d%s" % (self.port, path), timeout=5) as response:
+        with OPENER.open("http://127.0.0.1:%d%s" % (self.port, path), timeout=5) as response:
             return json.loads(response.read())
 
     def post(self, path, body, key=KEY):
         request = urllib.request.Request("http://127.0.0.1:%d%s" % (self.port, path), data=json.dumps(body).encode(), method="POST", headers={"Content-Type": "application/json", **({"Authorization": "Bearer " + key} if key else {})})
         try:
-            with urllib.request.urlopen(request, timeout=10) as response:
+            with OPENER.open(request, timeout=10) as response:
                 return response.status, json.loads(response.read())
         except urllib.error.HTTPError as error:
             return error.code, json.loads(error.read())
