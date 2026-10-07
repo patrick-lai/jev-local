@@ -31,10 +31,10 @@ export HF_HOME=$PWD/state/hf DECISION_HOST=127.0.0.1 DECISION_PORT=8089 DECISION
   DECISION_MODEL_DIR=$PWD/state/model DECISION_MEMORY_LIMIT_MB=4096 DECISION_CACHE_LIMIT_MB=256 \
   DECISION_MAX_PROMPT_TOKENS=8192
 touch state/owner.lock
-JEV_LOCAL_PYTHON=venv/bin/python jev-local serve state/owner.lock 20
+JEV_LOCAL_PYTHON=venv/bin/python jev-local serve state/owner.lock 31536000
 ```
 
-The server exits when nothing holds an exclusive lock on the owner file for the grace period (the second argument, in seconds), so run it under a parent that holds the lock, or pass a long grace period.
+The two arguments are an owner lock file and a grace period in seconds. The server exits once nothing has held an exclusive lock on that file for the whole grace period, which is how a host that dies without cleaning up does not leave it running. A host that wants that behavior holds the lock for as long as it runs and passes a short grace period (CommissionAI passes 20). Run by hand, pass a long one as above.
 
 ```sh
 curl -s -H 'Authorization: Bearer change-me' -H 'Content-Type: application/json' \
